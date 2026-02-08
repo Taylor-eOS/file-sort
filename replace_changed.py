@@ -53,7 +53,7 @@ def smart_copy_tree(src_dir, dst_dir):
             try:
                 shutil.copy2(src_path, dst_path)
                 different += 1
-                print(f"Replaced  {rel}  (different content)")
+                print(f"Replaced  {rel}  (different checksum)")
             except Exception as e:
                 print(f"Error replacing {rel}: {e}")
                 errors += 1
