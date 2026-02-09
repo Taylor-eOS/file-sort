@@ -14,11 +14,8 @@ def get_filenames(path):
     return files
 
 def main():
-    if len(sys.argv) != 3:
-        print("Usage: python list_missing.py in_folder_a but_not_in_folder_b")
-        sys.exit(1)
-    folder_a = sys.argv[1]
-    folder_b = sys.argv[2]
+    folder_a = input('In folder: ')
+    folder_b = input('But not in folder: ')
     files_a = get_filenames(folder_a)
     files_b = get_filenames(folder_b)
     only_in_a = sorted(files_a - files_b)
@@ -26,8 +23,7 @@ def main():
         print("No files found that exist only in the first folder.")
         return
     print(f"Files in {folder_a}")
-    print("but missing from")
-    print(f"          {folder_b}\n")
+    print("But missing from {folder_b}")
     for norm_name in only_in_a:
         print(norm_name)
 
