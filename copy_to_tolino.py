@@ -5,8 +5,8 @@ import random
 import hashlib
 from pathlib import Path
 
-COPY_DELAY = 8
-FAIL_RETRIES = 2
+COPY_DELAY = 3
+FAIL_RETRIES = 3
 
 def run_gio(cmd):
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -35,32 +35,49 @@ def calculate_remote_md5(remote_uri):
     return md5_hash.hexdigest()
 
 def list_remote_files():
-    out = run_gio(["gio", "list", "-l", mtp_base])
-    files = {}
-    for line in out.splitlines():
-        parts = line.split()
-        if len(parts) < 2:
+    out=run_gio(["gio","list","-l",mtp_base])
+    files={}
+    for raw in out.splitlines():
+        line=raw.rstrip("\n")
+        if not line:
             continue
-        name = parts[-1]
-        for part in parts[:-1]:
-            try:
-                size = int(part)
-                files[name] = size
-                break
-            except ValueError:
-                continue
-        if name not in files:
-            files[name] = None
+        parts=line.split(maxsplit=1)
+        if len(parts)==2 and parts[0].isdigit():
+            size=int(parts[0])
+            name=parts[1]
+        else:
+            size=None
+            name=line
+        name=decode_uri_name(name)
+        files[name]=size
     return files
 
+def decode_uri_name(name):
+    result=[]
+    i=0
+    length=len(name)
+    while i<length:
+        ch=name[i]
+        if ch=="%" and i+2<length:
+            hexpart=name[i+1:i+3]
+            try:
+                result.append(chr(int(hexpart,16)))
+                i+=3
+                continue
+            except ValueError:
+                pass
+        result.append(ch)
+        i+=1
+    return "".join(result)
+
 def verify_remote_file(remote_uri, expected_md5):
-    time.sleep(1)
+    #wait_seconds(1)
     actual_md5 = calculate_remote_md5(remote_uri)
     if actual_md5 != expected_md5:
         raise RuntimeError(f'MD5 mismatch: expected {expected_md5}, got {actual_md5}')
     return True
 
-def delete_remote_file(remote_uri, max_retries=FAIL_RETRIES, retry_delay=5):
+def delete_remote_file(remote_uri, max_retries=FAIL_RETRIES, retry_delay=COPY_DELAY):
     cmd = ["gio", "remove", remote_uri]
     last_error = None
     for attempt in range(max_retries):
@@ -71,39 +88,56 @@ def delete_remote_file(remote_uri, max_retries=FAIL_RETRIES, retry_delay=5):
         last_error = error_msg
         if attempt < max_retries - 1:
             print(f'  delete failed, retry {attempt + 2}/{max_retries}')
-            time.sleep(retry_delay)
+            wait_seconds(retry_delay)
     return False, last_error
 
-def copy_file(local_path, remote_uri, expected_md5, max_retries=FAIL_RETRIES, retry_delay=10):
+def copy_file(local_path, remote_uri, expected_md5, max_retries=FAIL_RETRIES, retry_delay=COPY_DELAY):
     cmd = ["gio", "copy", str(local_path), remote_uri]
     last_error = None
     for attempt in range(max_retries):
+        check_result = subprocess.run(["gio", "info", remote_uri], capture_output=True, text=True)
+        if check_result.returncode == 0:
+            print(f'  file exists on device, deleting first')
+            delete_success, delete_error = delete_remote_file(remote_uri, max_retries=max_retries, retry_delay=retry_delay)
+            if not delete_success:
+                last_error = f"Cannot delete existing file: {delete_error}"
+                if attempt < max_retries - 1:
+                    print(f'  delete failed, retry {attempt + 2}/{max_retries}')
+                    wait_seconds(retry_delay)
+                    continue
+                return False, last_error
+            wait_seconds(retry_delay)
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode == 0:
-            time.sleep(retry_delay)
-            try:
-                verify_remote_file(remote_uri, expected_md5)
-                return True, None
-            except RuntimeError as e:
-                error_str = str(e)
-                if "MD5 mismatch" in error_str and attempt < max_retries - 1:
-                    print(f'  verification failed, device may not be ready, retrying')
-                    time.sleep(retry_delay)
-                    continue
-                return False, error_str
+            wait_seconds(retry_delay)
+            verification_retries = 3
+            for verify_attempt in range(verification_retries):
+                try:
+                    verify_remote_file(remote_uri, expected_md5)
+                    return True, None
+                except RuntimeError as e:
+                    error_str = str(e)
+                    is_read_failure = "Failed to read remote file" in error_str
+                    is_md5_mismatch = "MD5 mismatch" in error_str
+                    if (is_read_failure or is_md5_mismatch) and verify_attempt < verification_retries - 1:
+                        wait_time = retry_delay * (verify_attempt + 1)
+                        print(f'  verification failed (attempt {verify_attempt + 1}/{verification_retries}), waiting {wait_time}s')
+                        wait_seconds(wait_time)
+                        continue
+                    return False, error_str
         error_msg = result.stderr.strip()
         last_error = error_msg
         is_cache_error = "couldn't add object to cache" in error_msg.lower()
         if is_cache_error and attempt < max_retries - 1:
             wait_time = retry_delay * (attempt + 1)
             print(f'  device not ready, waiting {wait_time}s before retry {attempt + 2}/{max_retries}')
-            time.sleep(wait_time)
+            wait_seconds(wait_time)
         elif attempt < max_retries - 1:
             print(f'  copy failed, retry {attempt + 2}/{max_retries}')
-            time.sleep(retry_delay)
+            wait_seconds(retry_delay)
     return False, last_error
 
-def copy_to_tolino(files_to_send, delay_seconds=8, randomize=False):
+def copy_to_tolino(files_to_send, delay_seconds=COPY_DELAY, randomize=False):
     try:
         existing = list_remote_files()
     except RuntimeError as e:
@@ -160,9 +194,10 @@ def copy_to_tolino(files_to_send, delay_seconds=8, randomize=False):
                 failed_files.append(str(local_path))
                 continue
             print(f'  file deleted')
-            time.sleep(delay_seconds)
+            wait_seconds(delay_seconds)
             del existing[remote_name]
-        print(f'Copying {local_path.name.replace(".epub", "").replace(".pdf", "")[:30]} ({local_size} bytes)')
+        book_name = local_path.name.replace(".epub", "").replace(".pdf", "")[:30]
+        print(f'Copying {book_name} ({local_size} bytes)')
         try:
             local_md5 = calculate_md5(local_path)
         except RuntimeError as e:
@@ -179,12 +214,16 @@ def copy_to_tolino(files_to_send, delay_seconds=8, randomize=False):
             print(f'ERROR: copying failed: {error_msg}')
             failed += 1
             failed_files.append(str(local_path))
-        time.sleep(delay_seconds)
+        wait_seconds(delay_seconds)
     print(f'\nFinished: {copied} copied, {skipped} skipped, {failed} failed')
     if failed_files:
         print('Failed files:')
         for f in failed_files:
             print(f"  - {f}")
+
+def wait_seconds(seconds):
+    if False: print(f'Wait {seconds} seconds')
+    time.sleep(seconds)
 
 def ask_yes_no(prompt):
     while True:
@@ -212,4 +251,3 @@ if __name__ == "__main__":
         randomize = ask_yes_no('Randomize file copying order?')
         copy_to_tolino(all_files, delay_seconds=COPY_DELAY, randomize=randomize)
     print(f'{source_dir_str}')
-
