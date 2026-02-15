@@ -40,7 +40,7 @@ def copy_to_tolinos(files_to_send, delay_seconds=12):
             print(f"Already exists, skipping: {remote_name}")
             skipped += 1
             continue
-        print(f"Copying {local_path.name} ...")
+        print(f"Copying {local_path.name}")
         cmd = ["gio", "copy", str(local_path), remote_uri]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode == 0:
@@ -53,12 +53,17 @@ def copy_to_tolinos(files_to_send, delay_seconds=12):
     print(f"\nFinished: {copied} copied, {skipped} skipped, {failed} failed")
 
 if __name__ == "__main__":
-    source_dir = input('Source folder: ')
+    while True:
+        source_dir_str = input('Folder with files to be copied: ').strip()
+        source_dir = Path(source_dir_str)
+        if source_dir.is_dir():
+            break
+        print(f"Error: '{source_dir}' is not a folder or does not exist, try again")
     epub_files = [str(p) for p in source_dir.glob("*.epub")]
     pdf_files  = [str(p) for p in source_dir.glob("*.pdf")]
     all_files = sorted(epub_files + pdf_files)
     if not all_files:
-        print("No files found")
+        print("No epub or pdf files found in the folder")
     else:
         copy_to_tolinos(all_files, delay_seconds=7)
 
