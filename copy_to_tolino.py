@@ -1,6 +1,7 @@
 import time
 import subprocess
 from pathlib import Path
+import urllib.parse
 
 COPY_DELAY = 4
 
@@ -12,13 +13,51 @@ def run_gio(cmd):
 
 mtp_base = "mtp://Rakuten_Kobo_Inc._tolino_vision_6/Interner gemeinsamer Speicher/Books/"
 
+def list_remote_files():
+    out = run_gio(["gio", "list", "-l", mtp_base])
+    files_by_name = {}
+    skipped_count = 0
+    for raw in out.splitlines():
+        line = raw.rstrip("\n")
+        if not line:
+            continue
+        tab_parts = line.split("\t")
+        if len(tab_parts) >= 2 and tab_parts[1].isdigit():
+            name_encoded = tab_parts[0]
+            size = int(tab_parts[1])
+            decoded_name = urllib.parse.unquote(name_encoded)
+            if decoded_name.lower().endswith(('.epub', '.pdf')):
+                files_by_name[decoded_name] = size
+            continue
+        space_parts = line.split(maxsplit=1)
+        if len(space_parts) == 2 and space_parts[0].isdigit():
+            size = int(space_parts[0])
+            name_encoded = space_parts[1]
+            decoded_name = urllib.parse.unquote(name_encoded)
+            if decoded_name.lower().endswith(('.epub', '.pdf')):
+                files_by_name[decoded_name] = size
+            continue
+        skipped_count += 1
+    if skipped_count > 0:
+        print(f'WARNING: Failed to parse {skipped_count} lines from device listing')
+    return files_by_name
+
 def copy_to_tolino(files_to_send, delay_seconds=COPY_DELAY, randomize=False):
     import random
+    print('Reading file list from device...')
+    try:
+        existing_by_name = list_remote_files()
+        print(f'Found {len(existing_by_name)} files already on device')
+    except RuntimeError as e:
+        print(f'WARNING: Could not read device file list: {e}')
+        print('Will attempt to copy all files without skipping duplicates')
+        existing_by_name = {}
     files_list = list(files_to_send)
     if randomize:
         random.shuffle(files_list)
         print('Files will be copied in random order')
     copied = 0
+    skipped = 0
     failed = 0
     failed_files = []
     total_files = len(files_list)
@@ -31,7 +70,6 @@ def copy_to_tolino(files_to_send, delay_seconds=COPY_DELAY, randomize=False):
             failed_files.append(str(local_path))
             continue
         remote_name = local_path.name
-        remote_uri = mtp_base + remote_name
         try:
             local_size = local_path.stat().st_size
         except OSError as e:
@@ -39,13 +77,24 @@ def copy_to_tolino(files_to_send, delay_seconds=COPY_DELAY, randomize=False):
             failed += 1
             failed_files.append(str(local_path))
             continue
-        book_name = local_path.name.replace(".epub", "").replace(".pdf", "")[:50]
+        if remote_name in existing_by_name:
+            print(f'Already exists (same name), skipping: {remote_name}')
+            skipped += 1
+            continue
+        if existing_by_name[remote_name] == local_size:
+            print(f'Already exists (same size), skipping: {remote_name}')
+            skipped += 1
+            continue
+        remote_filename_encoded = urllib.parse.quote(remote_name)
+        remote_uri = mtp_base + remote_filename_encoded
+        book_name = remote_name.replace(".epub", "").replace(".pdf", "")[:50]
         print(f'Copying {book_name} ({local_size} bytes)')
         cmd = ["gio", "copy", str(local_path), remote_uri]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode == 0:
             print(f'  copied')
             copied += 1
+            existing_by_name[remote_name] = local_size
             if index < total_files:
                 time.sleep(delay_seconds)
         else:
@@ -53,7 +102,7 @@ def copy_to_tolino(files_to_send, delay_seconds=COPY_DELAY, randomize=False):
             print(f'ERROR: copying failed: {error_msg}')
             failed += 1
             failed_files.append(str(local_path))
-    print(f'\nFinished: {copied} copied, {failed} failed')
+    print(f'\nFinished: {copied} copied, {skipped} skipped, {failed} failed')
     if failed_files:
         print('Failed files:')
         for f in failed_files:
@@ -80,9 +129,10 @@ if __name__ == "__main__":
     all_files = sorted(epub_files + pdf_files)
     print(f'Delay {COPY_DELAY} seconds')
     if not all_files:
-        print('No epub or pdf files found')
+        print('No files found')
     else:
         print(f'Copying {len(all_files)} files')
         randomize = ask_yes_no('Randomize file copying order?')
         copy_to_tolino(all_files, delay_seconds=COPY_DELAY, randomize=randomize)
+    print(source_dir_str)
 
