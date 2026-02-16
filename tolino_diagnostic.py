@@ -30,6 +30,7 @@ def is_book_file(filename):
 def collect_files(raw_output, list_all=False):
     files_by_name = {}
     skipped_count = 0
+    zero_byte_count = 0
     for raw_line in raw_output.splitlines():
         decoded_name, size = parse_gio_line(raw_line)
         if decoded_name is None or size is None:
@@ -37,37 +38,42 @@ def collect_files(raw_output, list_all=False):
                 print(f"SKIPPED (unexpected format): {repr(raw_line)}")
                 skipped_count += 1
             continue
+        if size == 0:
+            zero_byte_count += 1
+            continue
         files_by_name[decoded_name] = size
-    return files_by_name, skipped_count
+    return files_by_name, skipped_count, zero_byte_count
 
-def print_diagnostics(files_by_name, skipped_count, list_all=False):
-    mode = "all files" if list_all else "book files only"
+def print_diagnostics(files_by_name, skipped_count, zero_byte_count, list_all=False):
     if skipped_count > 0:
         print(f"\n{skipped_count} lines skipped due to unexpected format")
-    print(f"\nTotal {mode} found: {len(files_by_name)}")
+    #if zero_byte_count > 0:
+    #    print(f"{zero_byte_count} entries skipped (0 bytes – usually folders)")
+    print(f"Total files size > 0 found: {len(files_by_name)}")
     if files_by_name:
         if list_all:
-            print("All parsed files (decoded name | size):")
+            print("All parsed files (decoded name, size):")
             for name, size in sorted(files_by_name.items()):
-                print(f"  Size: {size:>10} bytes | Name: {name}")
+                print(f"Size: {size} bytes, name: {name.replace(".epub", "").replace(".pdf", "")[:50]}")
         else:
-            print("First 10 book files (decoded name | size):")
+            print("First 10 book files (decoded name,  size):")
             for i, (name, size) in enumerate(list(files_by_name.items())[:10]):
-                print(f"  Size: {size:>10} bytes | Name: {name}")
+                print(f"Size: {size} bytes, name: {name.replace(".epub", "").replace(".pdf", "")[:50]}")
 
 def main():
     mtp_base = "mtp://Rakuten_Kobo_Inc._tolino_vision_6/Interner gemeinsamer Speicher/Books/"
+    lim = 8
     print("Fetching file list from device...")
     raw_output = fetch_gio_listing(mtp_base)
-    print("\nRaw output from gio (first 10 lines):")
+    print(f"Raw output from gio:")
     lines = raw_output.splitlines()
-    for i, line in enumerate(lines[:10]):
+    for i, line in enumerate(lines[:lim]):
         print(f"Line {i}: {repr(line)}")
-    if len(lines) > 10:
-        print(f"... and {len(lines) - 10} more lines")
-    print("\n\nParsed files:")
-    files_by_name, skipped = collect_files(raw_output, list_all=LIST_ALL_FILES)
-    print_diagnostics(files_by_name, skipped, list_all=LIST_ALL_FILES)
+    if len(lines) > lim:
+        print(f"...")
+    print("\nParsed files:")
+    files_by_name, skipped, zeros = collect_files(raw_output, list_all=LIST_ALL_FILES)
+    print_diagnostics(files_by_name, skipped, zeros, list_all=LIST_ALL_FILES)
 
 if __name__ == "__main__":
     main()

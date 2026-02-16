@@ -77,12 +77,8 @@ def copy_to_tolino(files_to_send, delay_seconds=COPY_DELAY, randomize=False):
             failed += 1
             failed_files.append(str(local_path))
             continue
-        if remote_name in existing_by_name:
-            print(f'Already exists (same name), skipping: {remote_name}')
-            skipped += 1
-            continue
-        if existing_by_name[remote_name] == local_size:
-            print(f'Already exists (same size), skipping: {remote_name}')
+        if remote_name in existing_by_name or any(s == local_size for s in existing_by_name.values()):
+            print(f'Skipping, already present by name or size: {remote_name}')
             skipped += 1
             continue
         remote_filename_encoded = urllib.parse.quote(remote_name)
@@ -135,4 +131,3 @@ if __name__ == "__main__":
         randomize = ask_yes_no('Randomize file copying order?')
         copy_to_tolino(all_files, delay_seconds=COPY_DELAY, randomize=randomize)
     print(source_dir_str)
-
