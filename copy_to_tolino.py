@@ -3,7 +3,7 @@ import subprocess
 from pathlib import Path
 import urllib.parse
 
-COPY_DELAY = 4
+COPY_DELAY = 5
 
 def run_gio(cmd):
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -42,7 +42,7 @@ def list_remote_files():
         print(f'WARNING: Failed to parse {skipped_count} lines from device listing')
     return files_by_name
 
-def copy_to_tolino(files_to_send, delay_seconds=COPY_DELAY, randomize=False):
+def copy_to_tolino(files_to_send, delay_seconds, randomize):
     import random
     print('Reading file list from device...')
     try:
@@ -78,7 +78,7 @@ def copy_to_tolino(files_to_send, delay_seconds=COPY_DELAY, randomize=False):
             failed_files.append(str(local_path))
             continue
         if remote_name in existing_by_name or any(s == local_size for s in existing_by_name.values()):
-            print(f'Skipping, already present by name or size: {remote_name}')
+            print(f'Skipping, already present: {remote_name}')
             skipped += 1
             continue
         remote_filename_encoded = urllib.parse.quote(remote_name)
@@ -129,5 +129,6 @@ if __name__ == "__main__":
     else:
         print(f'Copying {len(all_files)} files')
         randomize = ask_yes_no('Randomize file copying order?')
-        copy_to_tolino(all_files, delay_seconds=COPY_DELAY, randomize=randomize)
+        copy_to_tolino(all_files, COPY_DELAY, randomize)
     print(source_dir_str)
+
