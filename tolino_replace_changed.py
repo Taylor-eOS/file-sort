@@ -1,44 +1,24 @@
 import time
 import random
 import subprocess
+import tempfile
 from pathlib import Path
 import urllib.parse
+from copy_to_tolino import list_remote_files, copy_to_tolino, ask_yes_no
 from settings import mtp_base, COPY_DELAY
 
-def run_gio(cmd):
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise RuntimeError(f"gio command failed: {' '.join(cmd)}\nError: {result.stderr.strip()}")
-    return result.stdout.strip()
-
-def list_remote_files():
-    out = run_gio(["gio", "list", "-l", mtp_base])
-    files_by_name = {}
-    skipped_count = 0
-    for raw in out.splitlines():
-        line = raw.rstrip("\n")
-        if not line:
-            continue
-        tab_parts = line.split("\t")
-        if len(tab_parts) >= 2 and tab_parts[1].isdigit():
-            name_encoded = tab_parts[0]
-            size = int(tab_parts[1])
-            decoded_name = urllib.parse.unquote(name_encoded)
-            if decoded_name.lower().endswith(('.epub', '.pdf')):
-                files_by_name[decoded_name] = size
-            continue
-        space_parts = line.split(maxsplit=1)
-        if len(space_parts) == 2 and space_parts[0].isdigit():
-            size = int(space_parts[0])
-            name_encoded = space_parts[1]
-            decoded_name = urllib.parse.unquote(name_encoded)
-            if decoded_name.lower().endswith(('.epub', '.pdf')):
-                files_by_name[decoded_name] = size
-            continue
-        skipped_count += 1
-    if skipped_count > 0:
-        print(f'WARNING: Failed to parse {skipped_count} lines from device listing')
-    return files_by_name
+def delete_remote_file(remote_name, delay_seconds):
+    remote_filename_encoded = urllib.parse.quote(remote_name)
+    remote_uri = mtp_base + remote_filename_encoded
+    with tempfile.NamedTemporaryFile(suffix=Path(remote_name).suffix, delete=False) as tmp:
+        tmp_path = Path(tmp.name)
+    try:
+        result = subprocess.run(["gio", "copy", str(tmp_path), remote_uri], capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.strip())
+        time.sleep(delay_seconds)
+    finally:
+        tmp_path.unlink(missing_ok=True)
 
 def copy_to_tolino(files_to_send, delay_seconds, randomize):
     print('Reading file list from device...')
@@ -54,6 +34,7 @@ def copy_to_tolino(files_to_send, delay_seconds, randomize):
         random.shuffle(files_list)
         print('Files will be copied in random order')
     copied = 0
+    replaced = 0
     skipped = 0
     failed = 0
     failed_files = []
@@ -74,19 +55,36 @@ def copy_to_tolino(files_to_send, delay_seconds, randomize):
             failed += 1
             failed_files.append(str(local_path))
             continue
-        if remote_name in existing_by_name or any(s == local_size for s in existing_by_name.values()):
-            print(f'Skipping, already present: {remote_name}')
-            skipped += 1
-            continue
+        needs_delete = False
+        if remote_name in existing_by_name:
+            if existing_by_name[remote_name] == local_size:
+                print(f'Skipping, already present: {remote_name}')
+                skipped += 1
+                continue
+            needs_delete = True
         remote_filename_encoded = urllib.parse.quote(remote_name)
         remote_uri = mtp_base + remote_filename_encoded
         book_name = remote_name.replace(".epub", "").replace(".pdf", "")[:50]
-        print(f'Copying {book_name} ({local_size} bytes)')
+        if needs_delete:
+            print(f'Deleting outdated remote: {book_name}')
+            try:
+                delete_remote_file(remote_name, delay_seconds)
+            except RuntimeError as e:
+                print(f'ERROR: delete-via-copy failed: {e}')
+                failed += 1
+                failed_files.append(str(local_path))
+                continue
+            print(f'Replacing {book_name} ({local_size} bytes)')
+        else:
+            print(f'Copying {book_name} ({local_size} bytes)')
         cmd = ["gio", "copy", str(local_path), remote_uri]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode == 0:
             print(f'  copied')
-            copied += 1
+            if needs_delete:
+                replaced += 1
+            else:
+                copied += 1
             existing_by_name[remote_name] = local_size
             if index < total_files:
                 time.sleep(delay_seconds)
@@ -95,20 +93,11 @@ def copy_to_tolino(files_to_send, delay_seconds, randomize):
             print(f'ERROR: copying failed: {error_msg}')
             failed += 1
             failed_files.append(str(local_path))
-    print(f'\nFinished: {copied} copied, {skipped} skipped, {failed} failed')
+    print(f'\nFinished: {copied} new, {replaced} replaced, {skipped} skipped, {failed} failed')
     if failed_files:
         print('Failed files:')
         for f in failed_files:
             print(f"  - {f}")
-
-def ask_yes_no(prompt):
-    while True:
-        response = input(prompt + " (y/n): ").strip().lower()
-        if response in ("y", "yes"):
-            return True
-        if response in ("n", "no"):
-            return False
-        print('Please enter y or n')
 
 if __name__ == "__main__":
     while True:
@@ -128,4 +117,3 @@ if __name__ == "__main__":
         randomize = ask_yes_no('Randomize file copying order?')
         copy_to_tolino(all_files, COPY_DELAY, randomize)
     print(source_dir_str)
-
