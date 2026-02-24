@@ -4,10 +4,10 @@ import subprocess
 import tempfile
 from pathlib import Path
 import urllib.parse
-from copy_to_tolino import list_remote_files, copy_to_tolino, ask_yes_no
+from copy_to_tolino import list_remote_files, ask_yes_no
 from settings import mtp_base, COPY_DELAY
 
-def delete_remote_file(remote_name, delay_seconds):
+def delete_remote_file(remote_name):
     remote_filename_encoded = urllib.parse.quote(remote_name)
     remote_uri = mtp_base + remote_filename_encoded
     with tempfile.NamedTemporaryFile(suffix=Path(remote_name).suffix, delete=False) as tmp:
@@ -16,19 +16,18 @@ def delete_remote_file(remote_name, delay_seconds):
         result = subprocess.run(["gio", "copy", str(tmp_path), remote_uri], capture_output=True, text=True)
         if result.returncode != 0:
             raise RuntimeError(result.stderr.strip())
-        time.sleep(delay_seconds)
+        time.sleep(COPY_DELAY)
     finally:
         tmp_path.unlink(missing_ok=True)
 
-def copy_to_tolino(files_to_send, delay_seconds, randomize):
+def copy_to_tolino(files_to_send, randomize):
     print('Reading file list from device...')
     try:
         existing_by_name = list_remote_files()
-        print(f'Found {len(existing_by_name)} files already on device')
+        print(f'Found {len(existing_by_name)} files on device')
     except RuntimeError as e:
-        print(f'WARNING: Could not read device file list: {e}')
-        print('Will attempt to copy all files without skipping duplicates')
-        existing_by_name = {}
+        print(f'ERROR: Could not read device file list: {e}')
+        return
     files_list = list(files_to_send)
     if randomize:
         random.shuffle(files_list)
@@ -58,7 +57,7 @@ def copy_to_tolino(files_to_send, delay_seconds, randomize):
         needs_delete = False
         if remote_name in existing_by_name:
             if existing_by_name[remote_name] == local_size:
-                print(f'Skipping, already present: {remote_name}')
+                print(f'Already present: {remote_name}')
                 skipped += 1
                 continue
             needs_delete = True
@@ -68,7 +67,7 @@ def copy_to_tolino(files_to_send, delay_seconds, randomize):
         if needs_delete:
             print(f'Deleting outdated remote: {book_name}')
             try:
-                delete_remote_file(remote_name, delay_seconds)
+                delete_remote_file(remote_name)
             except RuntimeError as e:
                 print(f'ERROR: delete-via-copy failed: {e}')
                 failed += 1
@@ -87,7 +86,7 @@ def copy_to_tolino(files_to_send, delay_seconds, randomize):
                 copied += 1
             existing_by_name[remote_name] = local_size
             if index < total_files:
-                time.sleep(delay_seconds)
+                time.sleep(COPY_DELAY)
         else:
             error_msg = result.stderr.strip()
             print(f'ERROR: copying failed: {error_msg}')
@@ -115,5 +114,6 @@ if __name__ == "__main__":
     else:
         print(f'Copying {len(all_files)} files')
         randomize = ask_yes_no('Randomize file copying order?')
-        copy_to_tolino(all_files, COPY_DELAY, randomize)
+        copy_to_tolino(all_files, randomize)
     print(source_dir_str)
+
