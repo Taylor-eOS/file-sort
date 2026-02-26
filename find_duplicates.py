@@ -52,7 +52,8 @@ def find_duplicates(folder_path, threshold=0.92):
     if not folder.is_dir():
         print(f"Error: Folder not found: {folder_path}")
         return []
-    files = [f for f in folder.iterdir() if f.is_file()]
+    recursive = input("Search subfolders? (y/n): ").strip().lower() == 'y'
+    files = [f for f in (folder.rglob("*") if recursive else folder.iterdir()) if f.is_file()]
     print(f"Scanning {len(files)} files for duplicates...")
     duplicate_groups = []
     processed = set()
