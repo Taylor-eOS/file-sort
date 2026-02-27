@@ -127,6 +127,6 @@ if __name__ == "__main__":
     user_input = input(f"Folder with origin files ({default_source}): ").strip()
     source_dir = user_input or default_source or '.'
     last_folder_helper.save_last_folder(source_dir)
-    target_dir = input("Destination folder: ").strip() or '.'
+    target_dir = source_dir.rstrip('/') + "_listed"
     main(source_dir, target_dir)
 
